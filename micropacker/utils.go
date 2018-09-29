@@ -86,10 +86,14 @@ func addToTar(tarWriter *tar.Writer, path string) error {
 			return err
 		}
 		// we need to add the proper link in tar.FileInfoHeader
-		link, err := os.Readlink(fullPath)
-		if err != nil {
-			return err
+		var link string
+		if fileInfo.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(fullPath)
+			if err != nil {
+				return err
+			}
 		}
+		// link is empty if not symlink
 		tarHeader, err := tar.FileInfoHeader(fileInfo, link)
 		if err != nil {
 			return err
