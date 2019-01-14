@@ -1,5 +1,5 @@
 /*
-Copyright 2018 VMware, Inc.
+Copyright 2019 VMware, Inc.
 SPDX-License-Identifier: BSD-2-Clause
 */
 
@@ -7,29 +7,43 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"debug/elf"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 func GetInterpFromExec(file string) (string, error) {
 	var err error
-	elfFile, _ := elf.Open(file)
-	defer elfFile.Close()
-	section := elfFile.Section(".interp")
-	if section != nil {
-		if interp, err := section.Data(); err == nil {
-			return string(interp[:len(interp)-1]), nil
+	var fileInfo os.FileInfo
+	if fileInfo, err = os.Stat(file); err == nil {
+		if fileInfo.Mode()&os.ModeType == 0 {
+			elfFile, _ := elf.Open(file)
+			defer elfFile.Close()
+			// TODO check that file is ELF?
+			section := elfFile.Section(".interp")
+			if section != nil {
+				var interp []byte
+				if interp, err = section.Data(); err == nil {
+					return string(interp[:len(interp)-1]), nil
+				}
+				return "", err
+			}
+			return "", errors.New("[GetInterpFromExec]: couldn't find the interp section")
 		}
+		return "", errors.New("[GetInterpFromExec]: " + file + " is not a regular file")
 	}
 	return "", err
 }
 
 func IsDir(filename string) (bool, error) {
 	var err error
-	if fileInfo, err := os.Lstat(filename); err == nil {
+	var fileInfo os.FileInfo
+	if fileInfo, err = os.Lstat(filename); err == nil {
 		if fileInfo.Mode()&os.ModeDir != 0 {
 			return true, nil
 		}
@@ -40,7 +54,8 @@ func IsDir(filename string) (bool, error) {
 
 func IsSymlink(filename string) (bool, error) {
 	var err error
-	if fileInfo, err := os.Lstat(filename); err == nil {
+	var fileInfo os.FileInfo
+	if fileInfo, err = os.Lstat(filename); err == nil {
 		if fileInfo.Mode()&os.ModeSymlink != 0 {
 			return true, nil
 		}
@@ -117,4 +132,12 @@ func addToTar(tarWriter *tar.Writer, path string) error {
 		}
 		return nil
 	})
+}
+
+func ExecCmd(executable string, executableArgs ...string) (string, error) {
+	var out bytes.Buffer
+	cmd := exec.Command(executable, executableArgs...)
+	cmd.Stdout = &out
+        err := cmd.Run()
+	return out.String(), err
 }
