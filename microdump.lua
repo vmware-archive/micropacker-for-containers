@@ -17,27 +17,40 @@ function on_init()
 	-- get some handlers
 	dir_h = chisel.request_field("evt.dir")
 	stype_h = chisel.request_field("syscall.type")
-	args_h = chisel.request_field("evt.args")
-	abs_h = chisel.request_field("evt.abspath")
+	arg_filename_h = chisel.request_field("evt.arg.filename")
+	arg_name_h = chisel.request_field("evt.arg.name")
+	arg_path_h = chisel.request_field("evt.arg.path")
+	arg_exe_h = chisel.request_field("evt.arg.exe")
+	absolute_h = chisel.request_field("evt.abspath")
 	return true
 end
 
 
 -- main event handler
 function on_event()
-	-- get the fields if direction is right
+	-- get the right fields depending on the direction
+	-- we might have a > execve with filename=/path/abc.sh
+	-- but then we need to capture also /bin/sh in the < execve
+	if evt.field(dir_h) == "<" and evt.field(stype_h) == "execve" then
+		arg_exe = evt.field(arg_exe_h)
+		if arg_exe ~= nil then
+			print(arg_exe)
+		end
+	end
 	if evt.field(dir_h) == ">" and evt.field(stype_h) ~= nil then
-		abs_path = evt.field(abs_h)
-		if abs_path ~= nil then
-			print(abs_path)
+		absolute = evt.field(absolute_h)
+		if absolute ~= nil then
+			print(absolute)
 		else
-			args = evt.field(args_h)
-			if args.filename ~= nil then
-				print(args.filename)
-			elseif args.name ~= nil then
-				print(args.name)
-			elseif args.path ~= nil then
-				print(args.path)
+			arg_filename = evt.field(arg_filename_h)
+			arg_name = evt.field(arg_name_h)
+			arg_path = evt.field(arg_path_h)
+			if arg_filename ~= nil then
+				print(arg_filename)
+			elseif arg_name ~= nil then
+				print(arg_name)
+			elseif arg_path ~= nil then
+				print(arg_path)
 			end
 		end
 	end
