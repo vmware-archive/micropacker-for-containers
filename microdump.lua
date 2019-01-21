@@ -29,12 +29,20 @@ end
 -- main event handler
 function on_event()
 	-- get the right fields depending on the direction
-	-- we might have a > execve with filename=/path/abc.sh
-	-- but then we need to capture also /bin/sh in the < execve
-	if evt.field(dir_h) == "<" and evt.field(stype_h) == "execve" then
-		arg_exe = evt.field(arg_exe_h)
-		if arg_exe ~= nil then
-			print(arg_exe)
+	if evt.field(dir_h) == "<" then
+		-- we might have a > execve with filename=/path/abc.sh
+		-- but then we need to capture also /bin/sh in the < execve
+		if evt.field(stype_h) == "execve" then
+			arg_exe = evt.field(arg_exe_h)
+			if arg_exe ~= nil and arg_exe ~= "<NA>" then
+				print(arg_exe)
+			end
+		-- check for name in < open
+		elseif evt.field(stype_h) == "open" then
+			arg_name = evt.field(arg_name_h)
+			if arg_name ~= nil and arg_name ~= "<NA>" then
+				print(arg_name)
+			end
 		end
 	end
 	if evt.field(dir_h) == ">" and evt.field(stype_h) ~= nil then
@@ -45,11 +53,11 @@ function on_event()
 			arg_filename = evt.field(arg_filename_h)
 			arg_name = evt.field(arg_name_h)
 			arg_path = evt.field(arg_path_h)
-			if arg_filename ~= nil then
+			if arg_filename ~= nil and arg_filename ~= "<NA>" then
 				print(arg_filename)
-			elseif arg_name ~= nil then
+			elseif arg_name ~= nil and arg_name ~= "<NA>" then
 				print(arg_name)
-			elseif arg_path ~= nil then
+			elseif arg_path ~= nil and arg_path ~= "<NA>" then
 				print(arg_path)
 			end
 		end
