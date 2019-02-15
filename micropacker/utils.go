@@ -138,6 +138,6 @@ func ExecCmd(executable string, executableArgs ...string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.Command(executable, executableArgs...)
 	cmd.Stdout = &out
-        err := cmd.Run()
+    err := cmd.Run()
 	return out.String(), err
 }

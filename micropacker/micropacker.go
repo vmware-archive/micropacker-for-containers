@@ -42,7 +42,6 @@ func (container baseContainer) lookEnvForFile(file string) (string, bool) {
 		}
 
 	}
-
 	return "", false
 }
 
@@ -147,26 +146,26 @@ func (container baseContainer) finalize() []string {
 	// microdump.lua will capture this action, but the file list might end up containing files
 	// that do not exist in the base image, leading to a completely missing /tmp folder
 	// check for /tmp folder for environment consistency
-	found_tmp := false
-	for k, _ := range container.fileSet {
+	foundTmp := false
+	for k := range container.fileSet {
 		if strings.HasPrefix(k, "/tmp/") {
-			found_tmp = true
+			foundTmp = true
 			break
 		}
 	}
 
 	// if not found, search for an implicitly defined /tmp in container.neededFolderSet
-	if !found_tmp {
-		for k, _ := range container.neededFolderSet {
+	if !foundTmp {
+		for k := range container.neededFolderSet {
 			// be sure that we are not including a folder like "/tmpfoo"
 			if k == "/tmp" || k == "/tmp/" {
-				found_tmp = true
+				foundTmp = true
 				break
 			}
 		}
 		// check again now out of the for loop
 		// if still not found, add it to the container.neededFolderSet
-		if !found_tmp {
+		if !foundTmp {
 			container.neededFolderSet["/tmp/"] = true
 			if container.debugMode {
 				fmt.Println("[finalize]: adding explictly /tmp/ folder")
@@ -278,6 +277,12 @@ func main() {
 	}
 	defer inputFile.Close()
 
+	currentDirectory, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+
 	scanner := bufio.NewScanner(inputFile)
 	for scanner.Scan() {
 		// pathString contains the input line
@@ -296,7 +301,12 @@ func main() {
 			continue
 		} else {
 			// err is nil, pathString points to something, either file or folder
-			container.addToSetsFromPath(pathString)
+			// if pathString is not absolute add the current path
+			if !path.IsAbs(pathString) {
+				container.addToSetsFromPath(currentDirectory + "/" + pathString)
+			} else {
+				container.addToSetsFromPath(pathString)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -305,6 +315,7 @@ func main() {
 	}
 
 	// before finalizing the container, perform pkg info gathering
+	// container.fileSet won't contain any duplicate
 	// IMPORTANT! pkg info retrieval is done on files only, not on folders
 	if *packageFlag != "" {
 		pkgInfoFile, err := os.Create(*packageFlag)
@@ -315,27 +326,48 @@ func main() {
 		}
 		// we need to detect what package managers are in this container
 		// for now, we will support only dpkg and rpm
-		pkgMngrFound := false
+		packageManagerFound := false
 
-		// dpkg support
-		pkgMngrPath, ok := container.lookEnvForFile("dpkg")
+		// dpkg support, we want the following output:
+		// package-name (package-version): filePath
+		packageManagerPath, ok := container.lookEnvForFile("dpkg-query")
 		if ok {
-			pkgMngrFound = true
+			packageManagerFound = true
 			if *debugFlag {
-				fmt.Printf("[main]: dpkg package manager detected\n")
+				fmt.Printf("[main]: dpkg-query package manager detected\n")
 			}
-			pkgInfoFile.WriteString("dpkg package manager results:\n")
-			for filePath, _ := range container.fileSet {
+			pkgInfoFile.WriteString("dpkg-query package manager results:\n")
+			for filePath := range container.fileSet {
 				if *debugFlag {
-					fmt.Printf("[main]: executing %s -S %s\n", pkgMngrPath, filePath)
+					fmt.Printf("[main]: executing %s -S %s\n", packageManagerPath, filePath)
 				}
-				// the command we want to execute is "dpkg -S filePath"
-				output, err := ExecCmd(pkgMngrPath, "-S", filePath)
+				// the first command we need to execute is "dpkg -S filePath"
+				rawCommandOutput, err := ExecCmd(packageManagerPath, "-S", filePath)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
+					// if filePath is not in the dpkg-query db or any other error, log and skip
+					if *debugFlag {
+						fmt.Printf("[main]: failed fetching package information for %s\n", filePath)
+					}
 					continue
 				}
-				pkgInfoFile.WriteString(output)
+				rawCommandOutput = strings.TrimSuffix(rawCommandOutput, "\n")
+				dpkgPackageName := strings.Split(rawCommandOutput, ":")[0]
+				// now that we have the package name, retrieve the package version
+				// with dpkg -s package-name
+				if *debugFlag {
+					fmt.Printf("[main]: executing %s -W %s\n", packageManagerPath, dpkgPackageName)
+				}
+				rawCommandOutput, err = ExecCmd(packageManagerPath, "-W", dpkgPackageName)
+				if err != nil {
+					// if dpkgPackageName is not in the dpkg-query db or any other error, log and skip
+					if *debugFlag {
+						fmt.Printf("[main]: failed fetching package information for %s\n", dpkgPackageName)
+					}
+					continue
+				}
+				rawCommandOutput = strings.TrimSuffix(rawCommandOutput, "\n")
+				dpkgPackageVersion := strings.Split(rawCommandOutput, "\t")[1]
+				pkgInfoFile.WriteString(dpkgPackageName + " (" + dpkgPackageVersion + "): " + filePath + "\n")
 			}
 			// pretty newline in case of multiple package managers inside a container
 			pkgInfoFile.WriteString("\n")
@@ -344,38 +376,41 @@ func main() {
 		// the following rpm block is not in an "else" block
 		// if a container has multiple package managers, we will try to manage both
 
-		// rpm support
-		pkgMngrPath, ok = container.lookEnvForFile("rpm")
+		// rpm support, we will use the default rpm output
+		packageManagerPath, ok = container.lookEnvForFile("rpm")
 		if ok {
-			pkgMngrFound = true
+			packageManagerFound = true
 			if *debugFlag {
 				fmt.Printf("[main]: rpm package manager detected\n")
 			}
 			pkgInfoFile.WriteString("rpm package manager results:\n")
-			for filePath, _ := range container.fileSet {
+			for filePath := range container.fileSet {
 				if *debugFlag {
-					fmt.Printf("[main]: executing %s -qf %s\n", pkgMngrPath, filePath)
+					fmt.Printf("[main]: executing %s -qf %s\n", packageManagerPath, filePath)
 				}
 				// the command we want to execute is "rpm -qf filePath"
-				output, err := ExecCmd(pkgMngrPath, "-qf", filePath)
-                                if err != nil {
-                                        fmt.Fprintln(os.Stderr, err)
-                                        continue
-                                }
+				output, err := ExecCmd(packageManagerPath, "-qf", filePath)
+                if err != nil {
+					// if filePath is not in the rpm db or any other error, log and skip
+					if *debugFlag {
+						fmt.Printf("[main]: failed fetching package information for %s\n", filePath)
+					}
+                   	continue
+        		}
 				// for rpm, add filePath info in output
-                                pkgInfoFile.WriteString(output + " " + filePath)
+				pkgInfoFile.WriteString(strings.TrimSuffix(output, "\n") + ": " + filePath + "\n")
 			}
 			// pretty printing
 			pkgInfoFile.WriteString("\n")
 		}
 		// TODO add more package manager support
-		if !pkgMngrFound && *debugFlag {
+		if !packageManagerFound && *debugFlag {
 			fmt.Printf("[main]: warning! couldn't detect any known package manager\n")
 		}
 	}
 
 	// now finalize the container and return a slice with all paths
-	// finalize will remove all duplicates and redundancies in
+	// finalize will remove all duplicates and redundancies between
 	// container.fileSet and container.folderSet
 	allPaths := container.finalize()
 
